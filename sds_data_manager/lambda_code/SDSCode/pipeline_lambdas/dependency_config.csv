@@ -141,6 +141,7 @@ hit, ancillary, hit-event-type-lookup, hit, l3, direct-events, HARD, DOWNSTREAM
 # <---- IDEX Dependencies ---->
 
 idex, l0, raw, idex, l1a, all, HARD, DOWNSTREAM
+idex, l1a, sci-1week, idex, l1b, sci-1week, HARD, DOWNSTREAM
 spin, spice, historical, idex, l1b, sci-1week, HARD, DOWNSTREAM
 repoint, spice, historical, idex, l1b, sci-1week, HARD, DOWNSTREAM
 ephemeris_reconstructed, spice, historical, idex, l1b, sci-1week, HARD, DOWNSTREAM
