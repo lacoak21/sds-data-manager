@@ -195,6 +195,37 @@ def test_s3_spin_files(session, s3_client, events_client):
     assert spin_table_rows[1].version == "02"
 
 
+# TODO this is failing. I am tryign to debug it.
+def test_s3_attitude(session, s3_client, events_client):
+    """Test attitude file ingestion."""
+    current_path = os.path.dirname(os.path.abspath(__file__))
+    one_level_up = os.path.abspath(os.path.join(current_path, ".."))
+    test_spice_data_dir = os.path.join(one_level_up, "test-data", "test_spice_files")
+
+    # Insert leapsecond spice kernel
+    leapsecond_event = put_local_file_in_bucket(
+        s3_client,
+        "imap/spice/lsk/naif0012.tls",
+        os.path.join(test_spice_data_dir, "naif0012.tls"),
+    )
+    spice_indexer.lambda_handler(leapsecond_event, None)
+
+    # Insert spacecraft clock spice kernel
+    clock_kernel_event = put_local_file_in_bucket(
+        s3_client,
+        "imap/spice/sclk/imap_sclk_0012.tsc",
+        os.path.join(test_spice_data_dir, "imap_sclk_0012.tsc"),
+    )
+    spice_indexer.lambda_handler(clock_kernel_event, None)
+    # First spin file ingestion
+    file1_event = put_local_file_in_bucket(
+        s3_client,
+        "imap/spice/ck/imap_2025_105_2026_105_01.ah.bc",
+        os.path.join(test_spice_data_dir, "imap_2025_105_2026_105_01.ah.bc"),
+    )
+    spice_indexer.lambda_handler(file1_event, None)
+
+
 def test_send_spice_event(events_client):
     """Test the ``send_spice_event`` function."""
     s3_key = "imap/spice/lsk/naif0012.tls"
