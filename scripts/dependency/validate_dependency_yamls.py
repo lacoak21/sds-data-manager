@@ -7,6 +7,7 @@ from sds_data_manager.orchestration.dependency import (
 from sds_data_manager.orchestration.types import ProcessingJobNode
 
 
+# TODO check same descriptor and major_versions
 def validate_dependency_yaml_versions(
     reader, major_version, node: ProcessingJobNode | None
 ):

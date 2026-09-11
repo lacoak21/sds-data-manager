@@ -1015,8 +1015,9 @@ class IMAPJobHandler:
         """Determine the major and minor version to use for each output product.
 
         The major version for each output comes directly from the dependency
-        config and is not bumped here. The minor version is the maximum minor
-        version already seen in the pipeline for this job, increased by one.
+        config and is not bumped here. The minor version is shared across all
+        outputs of a job: it is the maximum minor version already seen in the
+        processing jobs table for this job, increased by one.
 
         Parameters
         ----------
@@ -1034,24 +1035,6 @@ class IMAPJobHandler:
             Dictionary keyed by output descriptor, where each value is a dict
             with "major_version" and "minor_version" keys.
         """
-
-        def filter_conditions(table, node):
-            # Filter conditions for the query
-            conditions = [
-                table.instrument == node.source,
-                table.data_level == node.data_type,
-                table.descriptor == node.descriptor,
-                table.start_date == start_date.date(),
-                table.repointing == repointing,
-            ]
-            if table == models.ProcessingJob:
-                conditions.append(
-                    table.status.in_(
-                        [models.Status.INPROGRESS.value, models.Status.SUCCEEDED.value]
-                    )
-                )
-            return conditions
-
         # Get the output nodes for the job
         job_node = (
             self.job_config.source,
@@ -1060,73 +1043,52 @@ class IMAPJobHandler:
         )
         outputs = self.dependency_config_reader.config[job_node].outputs
 
-        # Step 1: Query the processing jobs table for the most recent minor
-        # version for this instrument/data_level/descriptor/start_date/repointing.
+        # Query the processing jobs table for the most recent minor version for
+        # this instrument/data_level/descriptor/start_date/repointing. This one
+        # minor version is shared by every output of the job below.
         max_minor_version_job = (
             session.query(models.ProcessingJob)
-            .filter(*filter_conditions(models.ProcessingJob, self.job_config))
+            .filter(
+                models.ProcessingJob.instrument == self.job_config.source,
+                models.ProcessingJob.data_level == self.job_config.data_type,
+                models.ProcessingJob.descriptor == self.job_config.descriptor,
+                models.ProcessingJob.start_date == start_date.date(),
+                models.ProcessingJob.repointing == repointing,
+                models.ProcessingJob.status.in_(
+                    [models.Status.INPROGRESS.value, models.Status.SUCCEEDED.value]
+                ),
+            )
             .order_by(models.ProcessingJob.minor_version.desc())
             .first()
         )
-        # Step 2: If a job for this exact key is already in progress, log it.
-        # The minor version itself is still bumped by the shared "+ 1" logic in
-        # Step 5; try_to_submit_job() is what actually prevents duplicate jobs
-        # from running.
-        job_in_progress = (
+        # If a job for this exact key is already in progress, log it. The minor
+        # version itself is still bumped by the "+ 1" logic below;
+        # try_to_submit_job() is what actually prevents duplicate jobs from
+        # running.
+        if (
             max_minor_version_job is not None
             and max_minor_version_job.status == models.Status.INPROGRESS
-        )
-        if job_in_progress:
+        ):
             logger.info(
                 f"Job with id: {max_minor_version_job.id} is in progress, but "
                 f"the dependencies have changed. Bumping version number."
             )
 
-        # Spacecraft pointing-attitude jobs produce a SPICE kernel rather than a
-        # science file, so there's no science files row to compare against —
-        # we always need to fall back to the processing-jobs table for these.
-        is_spacecraft_job = (
-            self.job_config.source == "spacecraft"
-            and self.job_config.descriptor == "pointing-attitude"
+        # Bump the minor version by one (starting at 1 if no prior version
+        # exists). Each output's major version comes directly from the
+        # dependency config and is not bumped.
+        minor_version = (
+            max_minor_version_job.minor_version + 1
+            if max_minor_version_job is not None
+            else 1
         )
-
-        # Step 3: If the descriptor is "all", only use the max version from the
-        # processing job table. The ScienceFiles table does not have descriptors
-        # of "all", since the products produced will have their own specific
-        # descriptors. Also use the processing-jobs version if this is a
-        # spacecraft pointing-attitude job, or if a matching job is in progress.
-        use_processing_table = (
-            "all" in self.job_config.descriptor or is_spacecraft_job or job_in_progress
-        )
-
-        output_versions = {}
-        for output in outputs:
-            if use_processing_table:
-                current_minor_version = (
-                    max_minor_version_job.minor_version
-                    if max_minor_version_job is not None
-                    else None
-                )
-            else:
-                # Step 4: Otherwise, get the max minor version from the science
-                # files table for this specific output.
-                current_minor_version = (
-                    session.query(func.max(models.ScienceFiles.minor_version))
-                    .filter(*filter_conditions(models.ScienceFiles, output))
-                    .scalar()
-                )
-
-            # Step 5: Bump the minor version by one (starting at 1 if no prior
-            # version exists). Each output's major version comes directly from the
-            # dependency config and is not bumped.
-            minor_version = (
-                current_minor_version + 1 if current_minor_version is not None else 1
-            )
-            output_versions[output.descriptor] = {
+        return {
+            output.descriptor: {
                 "minor_version": minor_version,
                 "major_version": output.major_version,
             }
-        return output_versions
+            for output in outputs
+        }
 
     def _dependency_hash(
         self, serialized_dependencies: str, output_versions: dict[str, dict[str, int]]
